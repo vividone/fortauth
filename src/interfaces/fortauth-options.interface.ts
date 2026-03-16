@@ -30,7 +30,7 @@ export interface FortAuthOptions {
   magicLink?: {
     enabled?: boolean;                       // default: false
     tokenExpiry?: string;                    // default: '15m'
-    sendEmail: (email: string, token: string, url: string) => Promise<void>;
+    sendEmail: (email: string, token: string) => Promise<void>;
   };
 
   /** Multi-factor authentication — TOTP (optional) */

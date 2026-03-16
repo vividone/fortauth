@@ -4,7 +4,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, IsNull } from 'typeorm';
 import { createHash, randomBytes } from 'crypto';
 import { FortMagicLink } from '../entities/fort-magic-link.entity';
 import { FortUser } from '../entities/fort-user.entity';
@@ -29,12 +29,19 @@ export class MagicLinkService {
     @Inject(FORTAUTH_OPTIONS) private readonly options: FortAuthOptions,
   ) {}
 
-  async sendMagicLink(email: string): Promise<void> {
+  /**
+   * Creates a magic link token without sending an email.
+   * Returns the raw token string, or `null` if the user doesn't exist
+   * (to prevent user enumeration).
+   */
+  async createMagicLink(email: string): Promise<string | null> {
     const emailLower = email.toLowerCase();
 
-    // Always send to prevent enumeration (but only actually send if user exists)
     const user = await this.userRepo.findOne({ where: { email: emailLower } });
-    if (!user) return;
+    if (!user) return null;
+
+    // Invalidate any existing unused tokens for this email
+    await this.invalidateExistingTokens(emailLower);
 
     const raw = randomBytes(32).toString('hex');
     const tokenHash = createHash('sha256').update(raw).digest('hex');
@@ -47,9 +54,19 @@ export class MagicLinkService {
     });
     await this.magicLinkRepo.save(magicLink);
 
+    return raw;
+  }
+
+  /**
+   * Creates a magic link token and sends it via the configured sendEmail callback.
+   */
+  async sendMagicLink(email: string): Promise<void> {
+    const raw = await this.createMagicLink(email);
+    if (!raw) return; // user not found — silent to prevent enumeration
+
     const sendEmail = this.options.magicLink?.sendEmail;
     if (sendEmail) {
-      await sendEmail(emailLower, raw, raw); // consumer builds the full URL
+      await sendEmail(email.toLowerCase(), raw);
     }
   }
 
@@ -63,8 +80,16 @@ export class MagicLinkService {
       where: { tokenHash },
     });
 
-    if (!magicLink || magicLink.usedAt || magicLink.expiresAt < new Date()) {
-      throw new BadRequestException('Invalid or expired magic link');
+    if (!magicLink) {
+      throw new BadRequestException('Invalid magic link');
+    }
+
+    if (magicLink.usedAt) {
+      throw new BadRequestException('Magic link has already been used');
+    }
+
+    if (magicLink.expiresAt < new Date()) {
+      throw new BadRequestException('Magic link has expired');
     }
 
     const user = await this.userRepo.findOne({
@@ -96,5 +121,13 @@ export class MagicLinkService {
     this.eventEmitter.userLogin(user.id, { ip, method: 'magic_link' });
 
     return { user: sanitizeUser(user), tokens: { accessToken, refreshToken } };
+  }
+
+  // ─── Helpers ───────────────────────────────────────────
+  private async invalidateExistingTokens(email: string): Promise<void> {
+    await this.magicLinkRepo.update(
+      { email, usedAt: IsNull() as any },
+      { usedAt: new Date() },
+    );
   }
 }
