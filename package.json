@@ -1,0 +1,107 @@
+{
+  "name": "fortauth",
+  "version": "0.1.0",
+  "description": "Production-grade authentication for NestJS",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "peerDependencies": {
+    "@nestjs/common": "^10.0.0 || ^11.0.0",
+    "@nestjs/core": "^10.0.0 || ^11.0.0",
+    "@nestjs/event-emitter": "^2.0.0 || ^3.0.0",
+    "@nestjs/jwt": "^10.0.0 || ^11.0.0",
+    "@nestjs/passport": "^10.0.0 || ^11.0.0",
+    "@nestjs/typeorm": "^10.0.0 || ^11.0.0",
+    "class-transformer": "^0.5.0",
+    "class-validator": "^0.14.0",
+    "passport": "^0.7.0",
+    "passport-jwt": "^4.0.1",
+    "typeorm": "^0.3.0"
+  },
+  "peerDependenciesMeta": {
+    "@nestjs/event-emitter": {
+      "optional": true
+    },
+    "passport-google-oauth20": {
+      "optional": true
+    },
+    "passport-github2": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "argon2": "^0.41.0",
+    "otplib": "^12.0.1",
+    "passport-github2": "^0.1.12",
+    "passport-google-oauth20": "^2.0.0",
+    "qrcode": "^1.5.4",
+    "uuid": "^11.0.0"
+  },
+  "devDependencies": {
+    "@nestjs/common": "^11.0.0",
+    "@nestjs/core": "^11.0.0",
+    "@nestjs/event-emitter": "^3.0.0",
+    "@nestjs/jwt": "^11.0.0",
+    "@nestjs/passport": "^11.0.0",
+    "@nestjs/typeorm": "^11.0.0",
+    "@types/node": "^22.0.0",
+    "@types/passport-github2": "^1.2.9",
+    "@types/passport-google-oauth20": "^2.0.16",
+    "@types/passport-jwt": "^4.0.1",
+    "@types/qrcode": "^1.5.5",
+    "@types/uuid": "^10.0.0",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.4",
+    "passport": "^0.7.0",
+    "passport-jwt": "^4.0.1",
+    "reflect-metadata": "^0.2.0",
+    "rxjs": "^7.8.0",
+    "typeorm": "^0.3.20",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "author": {
+    "name": "Fortbridge Technologies Ltd",
+    "email": "ops@fortbridge.co",
+    "url": "https://fortbridge.co"
+  },
+  "contributors": [
+    {
+      "name": "Victor Olaitan",
+      "role": "Lead Product Architect"
+    }
+  ],
+  "homepage": "https://github.com/vividone/fortauth#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vividone/fortauth.git"
+  },
+  "bugs": {
+    "url": "https://github.com/vividone/fortauth/issues"
+  },
+  "keywords": [
+    "nestjs",
+    "authentication",
+    "jwt",
+    "oauth",
+    "mfa",
+    "totp",
+    "api-keys",
+    "session-management",
+    "brute-force",
+    "magic-link",
+    "rbac",
+    "typeorm",
+    "passport"
+  ],
+  "license": "MIT"
+}

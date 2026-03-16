@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.js.map
+*.tgz
+.DS_Store
+.env
+.env.*
+.vscode/
+.idea/
+.claude/

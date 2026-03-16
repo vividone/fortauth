@@ -1,0 +1,564 @@
+{
+  "info": {
+    "name": "FortAuth",
+    "description": "Complete API collection for the FortAuth NestJS authentication package.\n\nBy Fortbridge Technologies Ltd (fortbridge.co)\nLead Product Architect: Victor Olaitan\nContact: ops@fortbridge.co\n\n## Setup\n1. Set the `baseUrl` variable to your server (default: `http://localhost:3000`)\n2. Register a user via the **Register** request\n3. The collection auto-saves tokens to variables after login/register/refresh\n\n## Variables\n- `baseUrl` — Server URL\n- `accessToken` — Auto-set after login/register\n- `refreshToken` — Auto-set after login/register\n- `apiKey` — Auto-set after creating an API key\n- `mfaToken` — Auto-set when MFA is required during login\n\n## Authentication Flows\n\n### Standard Flow\n1. **Register** → receive tokens + 6-digit OTP sent to email\n2. **Verify Email** → submit email + OTP to verify\n3. **Login** → receive tokens (or MFA challenge)\n4. Use `accessToken` as Bearer token on all protected routes\n5. When access token expires, call **Refresh Token** to get a new pair\n6. **Logout** to revoke session\n\n### Password Change Flow (OTP-protected)\n1. **Request Password Change OTP** → 6-digit OTP sent to email\n2. **Change Password** → submit currentPassword + newPassword + OTP\n\n### MFA Flow\n1. **Login** → receive `mfaRequired: true` + `mfaToken`\n2. **Verify MFA** with `mfaToken` + TOTP code → receive full tokens\n\n### Magic Link Flow\n1. **Send Magic Link** → email sent with token\n2. **Verify Magic Link** with token from email → receive tokens\n\n### API Key Flow\n1. **Create API Key** (authenticated) → receive `fort_xxx` key (shown once!)\n2. Use `x-api-key` header on any protected route instead of Bearer token",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000" },
+    { "key": "accessToken", "value": "" },
+    { "key": "refreshToken", "value": "" },
+    { "key": "apiKey", "value": "" },
+    { "key": "mfaToken", "value": "" },
+    { "key": "sessionId", "value": "" },
+    { "key": "apiKeyId", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Auth",
+      "description": "## Core Authentication Endpoints\n\nThese endpoints handle the primary authentication lifecycle:\n\n### Typical Flow\n1. **Register** — Create a new account. Returns tokens immediately + sends 6-digit verification OTP via email.\n2. **Verify Email** — Submit email + OTP to verify the email address.\n3. **Login** — Authenticate with email/password. Returns tokens (or MFA challenge if enabled).\n4. **Refresh Token** — Exchange an expiring refresh token for a new access + refresh pair.\n5. **Logout** — Revoke the current session and refresh token.\n\n### Password Recovery Flow\n1. **Forgot Password** — Request a password reset email (always returns 200 to prevent email enumeration).\n2. **Reset Password** — Use the token from the email to set a new password.\n\n### Notes\n- Access tokens expire in 15 minutes (default). Use Refresh Token to get new ones.\n- Refresh tokens are rotated on every use — the old token is immediately revoked.\n- If a revoked refresh token is reused, the entire token family is revoked (compromise detection).\n- After 5 failed login attempts (default), the account is locked for 15 minutes.",
+      "item": [
+        {
+          "name": "Register",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/register", "host": ["{{baseUrl}}"], "path": ["register"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\",\n  \"password\": \"MyPass@1234\",\n  \"fullName\": \"John Doe\"\n}"
+            },
+            "auth": { "type": "noauth" },
+            "description": "Create a new user account.\n\n**Auth:** Public (no token required)\n\n**Request Body:**\n- `email` (required) — Must be a valid email address. Must be unique.\n- `password` (required) — Must meet strength requirements: 8+ chars, mixed case, number, special char.\n- `fullName` (required) — User's display name.\n\n**Success Response (201):**\n```json\n{\n  \"user\": {\n    \"id\": \"uuid\",\n    \"email\": \"user@example.com\",\n    \"fullName\": \"John Doe\",\n    \"role\": \"user\",\n    \"isEmailVerified\": false\n  },\n  \"tokens\": {\n    \"accessToken\": \"eyJ...\",\n    \"refreshToken\": \"uuid...\"\n  }\n}\n```\n\n**Error Responses:**\n- `409 Conflict` — Email already registered\n- `400 Bad Request` — Weak password or missing fields\n\n**What happens next:**\n1. A 6-digit verification OTP is sent to the user's email via your `mailer.sendVerificationEmail` callback\n2. The user is logged in immediately (tokens returned)\n3. The user should verify their email using the **Verify Email** request with the OTP\n4. Access token auto-saved to `{{accessToken}}` variable"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set('accessToken', body.tokens.accessToken);",
+                  "  pm.collectionVariables.set('refreshToken', body.tokens.refreshToken);",
+                  "  pm.test('User registered', () => pm.expect(body.user.email).to.exist);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/login", "host": ["{{baseUrl}}"], "path": ["login"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\",\n  \"password\": \"MyPass@1234\"\n}"
+            },
+            "auth": { "type": "noauth" },
+            "description": "Authenticate with email and password.\n\n**Auth:** Public (no token required)\n\n**Request Body:**\n- `email` (required) — Registered email address\n- `password` (required) — Account password\n\n**Success Response — Standard Login (200):**\n```json\n{\n  \"accessToken\": \"eyJ...\",\n  \"refreshToken\": \"uuid...\",\n  \"user\": {\n    \"id\": \"uuid\",\n    \"email\": \"user@example.com\",\n    \"fullName\": \"John Doe\",\n    \"role\": \"user\"\n  }\n}\n```\n\n**Success Response — MFA Required (200):**\nIf the user has MFA enabled, a temporary token is returned instead:\n```json\n{\n  \"mfaRequired\": true,\n  \"mfaToken\": \"eyJ...(temp-jwt)\"\n}\n```\nUse the `mfaToken` with the **Verify MFA (Login)** request to complete authentication.\n\n**Error Responses:**\n- `401 Unauthorized` — Invalid email or password\n- `403 Forbidden` — Account is disabled\n- `429 Too Many Requests` — Account locked (too many failed attempts). Includes `retryAfter` in seconds.\n\n**Brute-force protection:**\nAfter 5 failed attempts (configurable), the account is locked for 15 minutes. Successful login resets the counter.\n\n**Auto-saved variables:**\n- `{{accessToken}}` and `{{refreshToken}}` on standard login\n- `{{mfaToken}}` when MFA is required"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.mfaRequired) {",
+                  "  pm.collectionVariables.set('mfaToken', body.mfaToken);",
+                  "  pm.test('MFA required', () => pm.expect(body.mfaRequired).to.be.true);",
+                  "} else if (body.accessToken) {",
+                  "  pm.collectionVariables.set('accessToken', body.accessToken);",
+                  "  pm.collectionVariables.set('refreshToken', body.refreshToken);",
+                  "  pm.test('Login successful', () => pm.expect(body.user.email).to.exist);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/logout", "host": ["{{baseUrl}}"], "path": ["logout"] },
+            "description": "End the current session and revoke the associated refresh token.\n\n**Auth:** Bearer token required\n\n**Request Body:** None\n\n**Success Response (200):**\n```json\n{ \"message\": \"Logged out\" }\n```\n\n**What happens:**\n1. The current session is marked as revoked\n2. The associated refresh token is revoked\n3. The access token remains valid until it naturally expires (default: 15 minutes)\n\n**Note:** To log out on all devices, use **Revoke All Sessions** instead."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Logged out', () => pm.expect(pm.response.code).to.equal(200));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refresh Token",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/refresh", "host": ["{{baseUrl}}"], "path": ["refresh"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
+            },
+            "auth": { "type": "noauth" },
+            "description": "Exchange a refresh token for a new access + refresh token pair.\n\n**Auth:** Public (uses refresh token in body, not Bearer header)\n\n**Request Body:**\n- `refreshToken` (required) — The refresh token from login or a previous refresh\n\n**Success Response (200):**\n```json\n{\n  \"accessToken\": \"eyJ...(new)\",\n  \"refreshToken\": \"uuid...(new)\"\n}\n```\n\n**How token rotation works:**\n1. Client sends the current refresh token\n2. Server validates the token (not revoked, not expired)\n3. Server revokes the old refresh token\n4. Server issues a new access + refresh pair in the same token family\n5. Both new tokens are returned\n\n**Reuse detection:**\nIf a revoked refresh token is sent (e.g., an attacker replaying a stolen token), FortAuth detects this and revokes ALL tokens in the family. Both the attacker and the legitimate user are logged out and must re-authenticate.\n\n**Error Responses:**\n- `401 Unauthorized` — Invalid, expired, or revoked refresh token\n\n**Auto-saved variables:** `{{accessToken}}` and `{{refreshToken}}` updated automatically."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set('accessToken', body.accessToken);",
+                  "  pm.collectionVariables.set('refreshToken', body.refreshToken);",
+                  "  pm.test('Tokens rotated', () => pm.expect(body.accessToken).to.exist);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Verify Email",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/verify-email", "host": ["{{baseUrl}}"], "path": ["verify-email"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\",\n  \"otp\": \"123456\"\n}"
+            },
+            "auth": { "type": "noauth" },
+            "description": "Verify a user's email address using the 6-digit OTP sent during registration.\n\n**Auth:** Public\n\n**Request Body:**\n- `email` (required) — The email address to verify\n- `otp` (required) — The 6-digit code from the email sent by your `mailer.sendVerificationEmail` callback\n\n**Success Response (200):**\n```json\n{ \"message\": \"Email verified successfully\" }\n```\n\n**How it works:**\n1. During registration, FortAuth generates a 6-digit OTP and calls your `mailer.sendVerificationEmail(email, otp)` callback\n2. You display the OTP in your email template (e.g., \"Your verification code is **123456**\")\n3. The user enters the code in your app, which sends it to this endpoint\n4. FortAuth verifies the OTP (hashed match, not expired, not already used)\n5. The user's `isEmailVerified` is set to `true`\n\n**OTP Details:**\n- 6-digit numeric code, cryptographically random\n- Single-use — consumed on successful verification\n- Expires after 10 minutes (configurable via `otp.expiry`)\n- Requesting a new OTP (re-registering or resending) invalidates the previous one\n- Rate limited: max 5 requests per 15 minutes per user\n\n**Error Responses:**\n- `400 Bad Request` — Invalid or expired OTP, or email already verified"
+          }
+        },
+        {
+          "name": "Forgot Password",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/forgot-password", "host": ["{{baseUrl}}"], "path": ["forgot-password"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\"\n}"
+            },
+            "auth": { "type": "noauth" },
+            "description": "Request a password reset email.\n\n**Auth:** Public\n\n**Request Body:**\n- `email` (required) — The email address to send the reset link to\n\n**Success Response (200):**\n```json\n{ \"message\": \"If an account with that email exists, a reset link has been sent\" }\n```\n\n**Security note:** This endpoint always returns the same 200 response regardless of whether the email exists. This prevents email enumeration attacks.\n\n**How it works:**\n1. If a user with the given email exists, FortAuth generates a reset token\n2. Your `mailer.sendPasswordResetEmail(email, token)` callback is called\n3. You include the token in a reset link (e.g., `https://yourapp.com/reset?token=xxx`)\n4. The user uses the **Reset Password** request with the token"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Request accepted', () => pm.expect(pm.response.code).to.equal(200));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reset Password",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/reset-password", "host": ["{{baseUrl}}"], "path": ["reset-password"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"<paste-token-from-email>\",\n  \"newPassword\": \"NewPass@5678\"\n}"
+            },
+            "auth": { "type": "noauth" },
+            "description": "Reset a user's password using the token from the forgot-password email.\n\n**Auth:** Public\n\n**Request Body:**\n- `token` (required) — The reset token from the email\n- `newPassword` (required) — Must meet password strength requirements (8+ chars, mixed case, number, special char)\n\n**Success Response (200):**\n```json\n{ \"message\": \"Password reset successful\" }\n```\n\n**What happens after reset:**\n1. The password is updated (hashed with argon2)\n2. All existing refresh tokens for this user are revoked\n3. The user is logged out on all devices and must log in again with the new password\n\n**Error Responses:**\n- `400 Bad Request` — Invalid/expired token or weak password"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Profile",
+      "description": "## User Profile Management\n\nView and update the currently authenticated user's profile.\n\nAll endpoints require a valid Bearer token (access token) or API key.\n\n### Available Actions\n- **Get Profile** — View current user data\n- **Update Profile** — Change display name or email\n- **Request Password Change OTP** — Get a 6-digit OTP sent to your email\n- **Change Password** — Update password (requires current password + OTP)",
+      "item": [
+        {
+          "name": "Get Profile",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/me", "host": ["{{baseUrl}}"], "path": ["me"] },
+            "description": "Get the authenticated user's profile.\n\n**Auth:** Bearer token or API key\n\n**Success Response (200):**\n```json\n{\n  \"id\": \"uuid\",\n  \"email\": \"user@example.com\",\n  \"fullName\": \"John Doe\",\n  \"role\": \"user\",\n  \"permissions\": [],\n  \"isEmailVerified\": true,\n  \"isMfaEnabled\": false,\n  \"lastLoginAt\": \"2025-01-15T10:30:00.000Z\",\n  \"createdAt\": \"2025-01-01T00:00:00.000Z\"\n}\n```\n\n**Error Responses:**\n- `401 Unauthorized` — Missing or invalid token"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Profile loaded', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.email).to.exist;",
+                  "  pm.expect(body.id).to.exist;",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update Profile",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/me", "host": ["{{baseUrl}}"], "path": ["me"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"Jane Doe\"\n}"
+            },
+            "description": "Update the authenticated user's profile.\n\n**Auth:** Bearer token required\n\n**Request Body (all fields optional):**\n- `fullName` — New display name\n- `email` — New email address (may trigger re-verification depending on config)\n\n**Success Response (200):**\n```json\n{\n  \"id\": \"uuid\",\n  \"email\": \"user@example.com\",\n  \"fullName\": \"Jane Doe\",\n  \"role\": \"user\",\n  ...\n}\n```"
+          }
+        },
+        {
+          "name": "Request Password Change OTP",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/me/password/request-otp", "host": ["{{baseUrl}}"], "path": ["me", "password", "request-otp"] },
+            "description": "Request a 6-digit OTP to authorize a password change. The OTP is sent to the authenticated user's email.\n\n**Auth:** Bearer token required\n\n**Request Body:** None\n\n**Success Response (200):**\n```json\n{ \"message\": \"OTP sent to your email\" }\n```\n\n**How it works:**\n1. FortAuth generates a 6-digit OTP and stores its SHA-256 hash\n2. Any previous unused password-change OTPs for this user are invalidated\n3. Your `mailer.sendPasswordChangeOtp(email, otp)` callback is called\n4. The user enters the OTP along with their current and new password in the **Change Password** request\n\n**OTP Details:**\n- 6-digit numeric code, cryptographically random\n- Single-use — consumed when password is successfully changed\n- Expires after 10 minutes (configurable via `otp.expiry`)\n- Rate limited: max 5 requests per 15 minutes per user\n\n**Error Responses:**\n- `400 Bad Request` — Cannot change password for OAuth-only accounts (no password set)\n- `429 Too Many Requests` — Too many OTP requests in the current window\n\n**Next step:** Use the OTP in the **Change Password** request."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('OTP requested', () => pm.expect(pm.response.code).to.equal(200));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Change Password",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/me/password", "host": ["{{baseUrl}}"], "path": ["me", "password"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"MyPass@1234\",\n  \"newPassword\": \"NewPass@5678\",\n  \"otp\": \"123456\"\n}"
+            },
+            "description": "Change the authenticated user's password. Requires the current password and a 6-digit OTP from the **Request Password Change OTP** endpoint.\n\n**Auth:** Bearer token required\n\n**Request Body:**\n- `currentPassword` (required) — Current password for verification\n- `newPassword` (required) — Must meet password strength requirements (8+ chars, mixed case, number, special char)\n- `otp` (required) — 6-digit OTP from the password change email\n\n**Success Response (200):**\n```json\n{ \"message\": \"Password changed successfully\" }\n```\n\n**Two-step flow:**\n1. Call **Request Password Change OTP** to receive a 6-digit code via email\n2. Call this endpoint with `currentPassword`, `newPassword`, and `otp`\n\n**Security notes:**\n- The current password is verified **before** the OTP is consumed — a wrong password won't waste the OTP\n- After success, all existing refresh tokens are revoked (user is logged out on all devices)\n\n**Error Responses:**\n- `401 Unauthorized` — Current password is incorrect\n- `400 Bad Request` — Invalid/expired OTP or weak new password"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Sessions",
+      "description": "## Session Management\n\nFortAuth tracks every login as a session with device information (IP, user agent, parsed device name). Users can view active sessions and revoke them individually or all at once.\n\n### How Sessions Work\n- A new session is created on every login (email/password, OAuth, magic link)\n- Each session is linked to a refresh token\n- Revoking a session also revokes its refresh token\n- Sessions track: IP address, user agent, device name, last active time\n- Maximum sessions per user is configurable (default: 10). When exceeded, the oldest session is revoked.\n\n### Typical Use Case\nShow users a \"Active Sessions\" page where they can see all logged-in devices and revoke suspicious ones.",
+      "item": [
+        {
+          "name": "List Sessions",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/sessions", "host": ["{{baseUrl}}"], "path": ["sessions"] },
+            "description": "List all active sessions for the authenticated user.\n\n**Auth:** Bearer token required\n\n**Success Response (200):**\n```json\n[\n  {\n    \"id\": \"uuid\",\n    \"ipAddress\": \"192.168.1.1\",\n    \"userAgent\": \"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)...\",\n    \"deviceName\": \"Chrome on macOS\",\n    \"lastActiveAt\": \"2025-01-15T10:30:00.000Z\",\n    \"createdAt\": \"2025-01-15T09:00:00.000Z\"\n  }\n]\n```\n\n**Auto-saved variables:** The first session's ID is saved to `{{sessionId}}`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  if (body.length > 0) {",
+                  "    pm.collectionVariables.set('sessionId', body[0].id);",
+                  "  }",
+                  "  pm.test('Sessions listed', () => pm.expect(Array.isArray(body)).to.be.true);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Revoke Session",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{baseUrl}}/sessions/{{sessionId}}", "host": ["{{baseUrl}}"], "path": ["sessions", "{{sessionId}}"] },
+            "description": "Revoke a specific session by ID.\n\n**Auth:** Bearer token required\n\n**URL Parameter:**\n- `:id` — The session ID to revoke (use `{{sessionId}}` from List Sessions)\n\n**Success Response (200):**\n```json\n{ \"message\": \"Session revoked\" }\n```\n\n**What happens:**\n1. The session is marked as revoked\n2. The associated refresh token is revoked\n3. The access token for that session continues to work until it expires\n\n**Error Responses:**\n- `404 Not Found` — Session not found or doesn't belong to user"
+          }
+        },
+        {
+          "name": "Revoke All Sessions",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{baseUrl}}/sessions", "host": ["{{baseUrl}}"], "path": ["sessions"] },
+            "description": "Revoke all sessions except the current one.\n\n**Auth:** Bearer token required\n\n**Success Response (200):**\n```json\n{ \"message\": \"All other sessions revoked\" }\n```\n\n**What happens:**\n1. All sessions except the current one are revoked\n2. All associated refresh tokens are revoked\n3. The user remains logged in on the current device only\n\n**Use case:** \"Log out everywhere else\" — useful when a user suspects their account is compromised."
+          }
+        }
+      ]
+    },
+    {
+      "name": "MFA",
+      "description": "## Multi-Factor Authentication (TOTP)\n\nFortAuth supports TOTP-based MFA using authenticator apps (Google Authenticator, Authy, 1Password, etc.).\n\n### Setup Flow\n1. **Setup MFA** — Generate a TOTP secret and QR code\n2. User scans the QR code in their authenticator app\n3. **Enable MFA** — Verify the first TOTP code to confirm setup\n\n### Login Flow with MFA\n1. **Login** → returns `{ mfaRequired: true, mfaToken: \"...\" }`\n2. **Verify MFA (Login)** → send `mfaToken` + TOTP code → receive full tokens\n\n### Backup Codes\n- 8 backup codes are generated during setup (configurable)\n- Each backup code is single-use\n- Backup codes can be used in place of TOTP codes during login\n- Use **Regenerate Backup Codes** to get a fresh set (invalidates old ones)\n\n### Disabling MFA\nRequires the user's password for security. Removes the TOTP secret and disables MFA.\n\n**Requires:** `mfa.enabled: true` in FortAuth config.",
+      "item": [
+        {
+          "name": "Setup MFA",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/mfa/setup", "host": ["{{baseUrl}}"], "path": ["mfa", "setup"] },
+            "description": "Generate a TOTP secret and QR code for MFA setup.\n\n**Auth:** Bearer token required\n\n**Request Body:** None\n\n**Success Response (201):**\n```json\n{\n  \"secret\": \"JBSWY3DPEHPK3PXP\",\n  \"qrCodeUrl\": \"data:image/png;base64,iVBORw0KGgo...\",\n  \"backupCodes\": [\n    \"a1b2c3d4\", \"e5f6g7h8\", \"i9j0k1l2\", \"m3n4o5p6\",\n    \"q7r8s9t0\", \"u1v2w3x4\", \"y5z6a7b8\", \"c9d0e1f2\"\n  ]\n}\n```\n\n**Important:**\n- The `qrCodeUrl` is a data URL that can be displayed directly in an `<img>` tag\n- The `secret` can be entered manually into an authenticator app if QR scanning isn't available\n- **Store backup codes securely** — they are shown only once and hashed in the database\n- MFA is NOT active yet. The user must verify with **Enable MFA** to activate it.\n\n**Next step:** User scans QR code in authenticator app, then send the first TOTP code to **Enable MFA**."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const body = pm.response.json();",
+                  "  pm.test('MFA secret generated', () => {",
+                  "    pm.expect(body.secret).to.exist;",
+                  "    pm.expect(body.qrCodeUrl).to.exist;",
+                  "    pm.expect(body.backupCodes).to.have.length.greaterThan(0);",
+                  "  });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Enable MFA",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/mfa/enable", "host": ["{{baseUrl}}"], "path": ["mfa", "enable"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"<6-digit-totp-code>\"\n}"
+            },
+            "description": "Verify the first TOTP code and enable MFA on the account.\n\n**Auth:** Bearer token required\n\n**Request Body:**\n- `code` (required) — The 6-digit code from the authenticator app\n\n**Success Response (200):**\n```json\n{ \"message\": \"MFA enabled\" }\n```\n\n**Prerequisites:**\n1. Must have called **Setup MFA** first\n2. User must have scanned the QR code in their authenticator app\n3. The code must be a valid TOTP code for the generated secret\n\n**After enabling:**\n- All future logins will require a TOTP code as a second factor\n- Login returns `{ mfaRequired: true, mfaToken }` instead of full tokens\n- The user's `isMfaEnabled` flag is set to `true`\n\n**Error Responses:**\n- `400 Bad Request` — Invalid TOTP code or MFA not set up"
+          }
+        },
+        {
+          "name": "Verify MFA (Login)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/mfa/verify", "host": ["{{baseUrl}}"], "path": ["mfa", "verify"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mfaToken\": \"{{mfaToken}}\",\n  \"code\": \"<6-digit-totp-or-backup-code>\"\n}"
+            },
+            "auth": { "type": "noauth" },
+            "description": "Complete the MFA login flow by verifying the TOTP code.\n\n**Auth:** Public (uses the temporary `mfaToken` from Login, not a Bearer token)\n\n**Request Body:**\n- `mfaToken` (required) — The temporary MFA token returned from Login when MFA is required\n- `code` (required) — Either a 6-digit TOTP code from the authenticator app OR a backup code\n\n**Success Response (200):**\n```json\n{\n  \"accessToken\": \"eyJ...\",\n  \"refreshToken\": \"uuid...\",\n  \"user\": {\n    \"id\": \"uuid\",\n    \"email\": \"user@example.com\",\n    \"fullName\": \"John Doe\",\n    \"isMfaEnabled\": true\n  }\n}\n```\n\n**Using backup codes:**\n- Backup codes can be used in place of TOTP codes\n- Each backup code is single-use and is consumed after verification\n- If all backup codes are used, regenerate them via **Regenerate Backup Codes**\n\n**Error Responses:**\n- `401 Unauthorized` — Invalid MFA token or TOTP code\n\n**Auto-saved variables:** `{{accessToken}}` and `{{refreshToken}}`"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  if (body.accessToken) {",
+                  "    pm.collectionVariables.set('accessToken', body.accessToken);",
+                  "    pm.collectionVariables.set('refreshToken', body.refreshToken);",
+                  "    pm.test('MFA login complete', () => pm.expect(body.user).to.exist);",
+                  "  }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Disable MFA",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/mfa/disable", "host": ["{{baseUrl}}"], "path": ["mfa", "disable"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"password\": \"MyPass@1234\"\n}"
+            },
+            "description": "Disable MFA on the account. Requires the user's password for security.\n\n**Auth:** Bearer token required\n\n**Request Body:**\n- `password` (required) — The user's current password\n\n**Success Response (200):**\n```json\n{ \"message\": \"MFA disabled\" }\n```\n\n**What happens:**\n1. The user's TOTP secret is removed from the database\n2. All backup codes are invalidated\n3. Future logins will no longer require a second factor\n4. The user's `isMfaEnabled` flag is set to `false`\n\n**Error Responses:**\n- `401 Unauthorized` — Incorrect password"
+          }
+        },
+        {
+          "name": "Regenerate Backup Codes",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/mfa/backup-codes", "host": ["{{baseUrl}}"], "path": ["mfa", "backup-codes"] },
+            "description": "Generate a new set of backup codes. Invalidates all previous backup codes.\n\n**Auth:** Bearer token required\n\n**Request Body:** None\n\n**Success Response (200):**\n```json\n{\n  \"backupCodes\": [\n    \"a1b2c3d4\", \"e5f6g7h8\", \"i9j0k1l2\", \"m3n4o5p6\",\n    \"q7r8s9t0\", \"u1v2w3x4\", \"y5z6a7b8\", \"c9d0e1f2\"\n  ]\n}\n```\n\n**Important:** Store these securely. Previous backup codes are no longer valid.\n\n**Prerequisites:** MFA must be enabled on the account."
+          }
+        }
+      ]
+    },
+    {
+      "name": "API Keys",
+      "description": "## API Key Management\n\nAPI keys provide long-lived, programmatic access to protected routes without JWT tokens. Ideal for CI/CD pipelines, server-to-server communication, and automated scripts.\n\n### How API Keys Work\n1. **Create** an API key (requires JWT authentication)\n2. The full key (`fort_xxx...`) is returned **once** — store it securely\n3. Use the key via the `x-api-key` header on any protected route\n4. The key is hashed (SHA-256) in the database — only the prefix is stored in plaintext\n\n### Key Format\nAll keys have the `fort_` prefix followed by random bytes:\n```\nfort_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0\n```\n\n### Scopes\nAPI keys can have optional scopes (e.g., `[\"read\", \"write\"]`). These are stored with the key but enforcement is up to your application logic.\n\n**Requires:** `apiKeys.enabled: true` in FortAuth config.",
+      "item": [
+        {
+          "name": "Create API Key",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api-keys", "host": ["{{baseUrl}}"], "path": ["api-keys"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"CI Pipeline Key\",\n  \"scopes\": [\"read\", \"write\"]\n}"
+            },
+            "description": "Create a new API key for the authenticated user.\n\n**Auth:** Bearer token required\n\n**Request Body:**\n- `name` (required) — Human-readable label for the key\n- `scopes` (optional) — Array of scope strings\n\n**Success Response (201):**\n```json\n{\n  \"id\": \"uuid\",\n  \"key\": \"fort_a1b2c3d4e5f6g7h8...\",\n  \"keyPrefix\": \"fort_a1b2\",\n  \"name\": \"CI Pipeline Key\",\n  \"scopes\": [\"read\", \"write\"]\n}\n```\n\n**IMPORTANT:** The `key` field is only returned in this response. It cannot be retrieved again. Store it in a secure location (environment variable, secrets manager, etc.).\n\n**Auto-saved variables:** `{{apiKey}}` and `{{apiKeyId}}`"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set('apiKey', body.key);",
+                  "  pm.collectionVariables.set('apiKeyId', body.id);",
+                  "  pm.test('API key created', () => {",
+                  "    pm.expect(body.key).to.match(/^fort_/);",
+                  "  });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "List API Keys",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api-keys", "host": ["{{baseUrl}}"], "path": ["api-keys"] },
+            "description": "List all API keys for the authenticated user.\n\n**Auth:** Bearer token required\n\n**Success Response (200):**\n```json\n[\n  {\n    \"id\": \"uuid\",\n    \"name\": \"CI Pipeline Key\",\n    \"keyPrefix\": \"fort_a1b2\",\n    \"scopes\": [\"read\", \"write\"],\n    \"lastUsedAt\": \"2025-01-15T10:30:00.000Z\",\n    \"createdAt\": \"2025-01-01T00:00:00.000Z\"\n  }\n]\n```\n\n**Note:** The full key is never returned in list responses — only the prefix is shown for identification."
+          }
+        },
+        {
+          "name": "Revoke API Key",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{baseUrl}}/api-keys/{{apiKeyId}}", "host": ["{{baseUrl}}"], "path": ["api-keys", "{{apiKeyId}}"] },
+            "description": "Revoke (delete) an API key.\n\n**Auth:** Bearer token required\n\n**URL Parameter:**\n- `:id` — The API key ID to revoke\n\n**Success Response (200):**\n```json\n{ \"message\": \"API key revoked\" }\n```\n\n**After revocation:** Any request using this API key will receive a `401 Unauthorized` response."
+          }
+        },
+        {
+          "name": "Auth with API Key",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "x-api-key", "value": "{{apiKey}}" }],
+            "url": { "raw": "{{baseUrl}}/me", "host": ["{{baseUrl}}"], "path": ["me"] },
+            "auth": { "type": "noauth" },
+            "description": "Test API key authentication by accessing a protected route.\n\n**Auth:** API key via `x-api-key` header (no Bearer token)\n\nThis request demonstrates using an API key instead of a JWT to access a protected route. The `x-api-key` header is set to `{{apiKey}}` (auto-saved from Create API Key).\n\n**How it works:**\n1. FortAuth's ApiKeyGuard checks for the `x-api-key` header\n2. If found, it hashes the key and looks it up by prefix + hash\n3. If valid, the associated user is loaded into `request.user`\n4. The JWT guard is skipped (user already authenticated)\n\n**Success Response (200):** Same as Get Profile — returns the user's profile data.\n\n**Error Responses:**\n- `401 Unauthorized` — Invalid, expired, or revoked API key"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('API key auth works', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.email).to.exist;",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Magic Links",
+      "description": "## Passwordless Authentication\n\nMagic links allow users to log in without a password by clicking a one-time link sent to their email.\n\n### Flow\n1. **Send Magic Link** — User enters their email, FortAuth generates a token and calls your `magicLink.sendEmail` callback\n2. You include the token in a link (e.g., `https://yourapp.com/auth/magic?token=xxx`)\n3. User clicks the link in their email\n4. **Verify Magic Link** — Your frontend extracts the token and sends it to this endpoint → receives JWT tokens\n\n### Security\n- Tokens are single-use and expire after `tokenExpiry` (default: 15 minutes)\n- Tokens are stored as SHA-256 hashes in the database\n- The response for non-existent emails is identical (prevents email enumeration)\n\n**Requires:** `magicLink.enabled: true` in FortAuth config.",
+      "item": [
+        {
+          "name": "Send Magic Link",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/magic-link", "host": ["{{baseUrl}}"], "path": ["magic-link"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\"\n}"
+            },
+            "auth": { "type": "noauth" },
+            "description": "Request a magic link email for passwordless login.\n\n**Auth:** Public\n\n**Request Body:**\n- `email` (required) — The user's email address\n\n**Success Response (200):**\n```json\n{ \"message\": \"If an account with that email exists, a magic link has been sent\" }\n```\n\n**How it works:**\n1. FortAuth generates a random token and stores its SHA-256 hash\n2. Your `magicLink.sendEmail(email, token, url)` callback is called\n3. You build the magic link URL and send it to the user\n\n**Security note:** Always returns the same response regardless of whether the email exists."
+          }
+        },
+        {
+          "name": "Verify Magic Link",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/magic-link/verify", "host": ["{{baseUrl}}"], "path": ["magic-link", "verify"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"<paste-token-from-email>\"\n}"
+            },
+            "auth": { "type": "noauth" },
+            "description": "Verify a magic link token and receive JWT tokens.\n\n**Auth:** Public\n\n**Request Body:**\n- `token` (required) — The token from the magic link email\n\n**Success Response (200):**\n```json\n{\n  \"tokens\": {\n    \"accessToken\": \"eyJ...\",\n    \"refreshToken\": \"uuid...\"\n  },\n  \"user\": {\n    \"id\": \"uuid\",\n    \"email\": \"user@example.com\",\n    \"fullName\": \"John Doe\"\n  }\n}\n```\n\n**What happens:**\n1. Token is validated (not expired, not already used)\n2. Token is marked as used (single-use)\n3. User is found by email\n4. A new session is created\n5. JWT access + refresh token pair is generated\n\n**Error Responses:**\n- `401 Unauthorized` — Invalid, expired, or already-used token\n\n**Auto-saved variables:** `{{accessToken}}` and `{{refreshToken}}`"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  if (body.tokens) {",
+                  "    pm.collectionVariables.set('accessToken', body.tokens.accessToken);",
+                  "    pm.collectionVariables.set('refreshToken', body.tokens.refreshToken);",
+                  "  }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OAuth",
+      "description": "## OAuth Login (Google & GitHub)\n\nOAuth provides \"Login with Google\" / \"Login with GitHub\" functionality.\n\n### Flow\n1. Open the `GET /oauth/google` (or `/oauth/github`) URL **in a browser**\n2. The user is redirected to the provider's login page\n3. After authenticating, the provider redirects back to your callback URL\n4. FortAuth exchanges the auth code for the user's profile\n5. FortAuth finds or creates the user and returns JWT tokens\n\n### Account Linking\n- If the OAuth email matches an existing FortAuth user, the OAuth account is linked to that user\n- If no user exists with that email, a new account is created (no password — OAuth-only)\n- Users can have multiple OAuth providers linked to the same account\n\n### Important Notes\n- These endpoints **cannot be tested in Postman** — they require browser redirects\n- Open the URLs directly in a browser to test\n- The callback URL in your FortAuth config must match the one registered with the OAuth provider\n\n**Requires:** `oauth.google` or `oauth.github` in FortAuth config.",
+      "item": [
+        {
+          "name": "Google Login (open in browser)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/oauth/google", "host": ["{{baseUrl}}"], "path": ["oauth", "google"] },
+            "auth": { "type": "noauth" },
+            "description": "Initiate Google OAuth login.\n\n**Auth:** Public\n\n**How to test:** Open this URL in a browser (not Postman). You will be redirected to Google's login page.\n\n**Flow:**\n1. Browser navigates to `GET /oauth/google`\n2. FortAuth redirects to Google with your `clientId` and `callbackUrl`\n3. User authenticates with Google\n4. Google redirects to `GET /oauth/google/callback` with an auth code\n5. FortAuth exchanges the code for the user's Google profile\n6. User is found/created, tokens are returned\n\n**Callback response:**\n```json\n{\n  \"accessToken\": \"eyJ...\",\n  \"refreshToken\": \"uuid...\",\n  \"user\": { \"id\": \"...\", \"email\": \"user@gmail.com\", ... }\n}\n```"
+          }
+        },
+        {
+          "name": "GitHub Login (open in browser)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/oauth/github", "host": ["{{baseUrl}}"], "path": ["oauth", "github"] },
+            "auth": { "type": "noauth" },
+            "description": "Initiate GitHub OAuth login.\n\n**Auth:** Public\n\n**How to test:** Open this URL in a browser (not Postman). You will be redirected to GitHub's login page.\n\n**Flow:**\n1. Browser navigates to `GET /oauth/github`\n2. FortAuth redirects to GitHub with your `clientId` and `callbackUrl`\n3. User authenticates with GitHub\n4. GitHub redirects to `GET /oauth/github/callback` with an auth code\n5. FortAuth exchanges the code for the user's GitHub profile\n6. User is found/created, tokens are returned\n\n**Callback response:**\n```json\n{\n  \"accessToken\": \"eyJ...\",\n  \"refreshToken\": \"uuid...\",\n  \"user\": { \"id\": \"...\", \"email\": \"user@github.com\", ... }\n}\n```"
+          }
+        }
+      ]
+    }
+  ]
+}
