@@ -8,7 +8,7 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, IsNull } from 'typeorm';
 import { createHash, randomBytes } from 'crypto';
 import { FortUser } from '../entities/fort-user.entity';
 import { FortPasswordReset } from '../entities/fort-password-reset.entity';
@@ -216,11 +216,9 @@ export class AuthService {
   // ─── Request Password Change OTP ─────────────────────
   async requestPasswordChangeOtp(userId: string): Promise<void> {
     const user = await this.userRepo.findOneOrFail({ where: { id: userId } });
-    if (!user.passwordHash) {
-      throw new BadRequestException(
-        'Cannot change password for OAuth-only accounts',
-      );
-    }
+    // Passwordless users (magic link / OAuth) don't need OTP — they set
+    // their initial password directly via changePassword().
+    if (!user.passwordHash) return;
 
     const otp = await this.otpService.createOtp(userId, OtpPurpose.PASSWORD_CHANGE);
     if (this.options.mailer.sendPasswordChangeOtp) {
@@ -233,6 +231,12 @@ export class AuthService {
     const user = await this.userRepo.findOne({ where: { email: email.toLowerCase() } });
     // Always return success to prevent email enumeration
     if (!user) return;
+
+    // Invalidate existing unused reset tokens
+    await this.passwordResetRepo.update(
+      { userId: user.id, usedAt: IsNull() as any },
+      { usedAt: new Date() },
+    );
 
     const raw = randomBytes(32).toString('hex');
     const tokenHash = createHash('sha256').update(raw).digest('hex');
@@ -282,10 +286,13 @@ export class AuthService {
     this.passwordService.validateStrength(newPassword);
 
     const user = await this.userRepo.findOneOrFail({ where: { id: userId } });
+
     if (!user.passwordHash) {
-      throw new BadRequestException(
-        'Cannot change password for OAuth-only accounts',
-      );
+      // First-time password setup for passwordless users (magic link, OAuth)
+      user.passwordHash = await this.passwordService.hash(newPassword);
+      await this.userRepo.save(user);
+      this.eventEmitter.passwordChanged(userId);
+      return;
     }
 
     // Verify current password first (doesn't consume OTP if wrong)
