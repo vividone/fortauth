@@ -3,9 +3,11 @@ import {
   PrimaryGeneratedColumn,
   Column,
   CreateDateColumn,
+  Index,
 } from 'typeorm';
 
 @Entity('fort_login_attempts')
+@Index(['email', 'success', 'createdAt'])
 export class FortLoginAttempt {
   @PrimaryGeneratedColumn('uuid')
   id!: string;

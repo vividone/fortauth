@@ -5,6 +5,7 @@ import {
   CreateDateColumn,
   ManyToOne,
   JoinColumn,
+  Index,
 } from 'typeorm';
 import { FortUser } from './fort-user.entity';
 
@@ -14,6 +15,7 @@ export enum OtpPurpose {
 }
 
 @Entity('fort_otps')
+@Index(['userId', 'purpose'])
 export class FortOtp {
   @PrimaryGeneratedColumn('uuid')
   id!: string;

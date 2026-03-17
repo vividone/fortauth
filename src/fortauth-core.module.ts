@@ -1,4 +1,4 @@
-import { DynamicModule, Module, Provider, Type } from '@nestjs/common';
+import { DynamicModule, Logger, Module, Provider, Type } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
@@ -36,6 +36,7 @@ import { MagicLinkController } from './magic-link/magic-link.controller';
 import { OAuthService } from './oauth/oauth.service';
 import { OAuthController } from './oauth/oauth.controller';
 import { FortAuthEventEmitter } from './events/fort-auth-event-emitter';
+import { CleanupService } from './maintenance/cleanup.service';
 
 // Try to load optional OAuth strategies (deps may not be installed)
 let GoogleStrategy: Type | undefined;
@@ -45,7 +46,18 @@ try { GitHubStrategy = require('./oauth/strategies/github.strategy').GitHubStrat
 
 @Module({})
 export class FortAuthCoreModule {
+  private static readonly logger = new Logger('FortAuth');
+
+  private static validateJwtSecret(secret: string): void {
+    if (secret.length < 32) {
+      this.logger.warn(
+        'JWT secret is shorter than 32 characters. This is insecure and will be rejected in a future version.',
+      );
+    }
+  }
+
   static forRoot(options: FortAuthOptions): DynamicModule {
+    this.validateJwtSecret(options.jwt.secret);
     const providers: Provider[] = [
       { provide: FORTAUTH_OPTIONS, useValue: options },
       AuthService,
@@ -56,6 +68,7 @@ export class FortAuthCoreModule {
       SessionsService,
       BruteForceService,
       FortAuthEventEmitter,
+      CleanupService,
     ];
 
     const controllers: Type[] = [AuthController, SessionsController];
@@ -131,6 +144,7 @@ export class FortAuthCoreModule {
         SessionsService,
         BruteForceService,
         FortAuthEventEmitter,
+        CleanupService,
         ...(options.mfa?.enabled ? [MfaService] : []),
         ...(options.apiKeys?.enabled ? [ApiKeysService] : []),
         ...(options.magicLink?.enabled ? [MagicLinkService] : []),
@@ -152,7 +166,11 @@ export class FortAuthCoreModule {
       {
         provide: FORTAUTH_OPTIONS,
         inject: asyncOptions.inject || [],
-        useFactory: asyncOptions.useFactory,
+        useFactory: async (...args: any[]) => {
+          const options = await asyncOptions.useFactory(...args);
+          FortAuthCoreModule.validateJwtSecret(options.jwt.secret);
+          return options;
+        },
       },
       AuthService,
       TokenService,
@@ -163,6 +181,7 @@ export class FortAuthCoreModule {
       BruteForceService,
       BruteForceGuard,
       FortAuthEventEmitter,
+      CleanupService,
       // Optional feature services — always registered in async mode
       MfaService,
       ApiKeysService,
@@ -220,6 +239,7 @@ export class FortAuthCoreModule {
         SessionsService,
         BruteForceService,
         FortAuthEventEmitter,
+        CleanupService,
         MfaService,
         ApiKeysService,
         MagicLinkService,

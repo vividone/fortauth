@@ -42,6 +42,7 @@ export { ApiKeysService } from './api-keys/api-keys.service';
 export { MagicLinkService } from './magic-link/magic-link.service';
 export { OAuthService, OAuthProfile } from './oauth/oauth.service';
 export { OtpService } from './auth/otp.service';
+export { CleanupService, CleanupResult } from './maintenance/cleanup.service';
 
 // ─── Events ──────────────────────────────────────────────
 export { FortAuthEvent } from './events/fort-auth-events';
@@ -62,10 +63,13 @@ export {
   UpdateProfileDto,
   MfaVerifyLoginDto,
 } from './dto/auth.dto';
+export { EnableMfaDto, DisableMfaDto, RegenerateBackupCodesDto } from './dto/mfa.dto';
+export { CreateApiKeyDto } from './dto/api-key.dto';
 
 // ─── Utilities ──────────────────────────────────────────
 export { parseDuration } from './utils/parse-duration';
 export { sanitizeUser } from './utils/sanitize-user';
+export { timingSafeCompare } from './utils/timing-safe-compare';
 
 // ─── Constants ───────────────────────────────────────────
 export {

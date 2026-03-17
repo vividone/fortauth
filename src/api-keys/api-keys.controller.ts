@@ -5,11 +5,13 @@ import {
   Delete,
   Body,
   Param,
+  ParseUUIDPipe,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { ApiKeysService } from './api-keys.service';
+import { CreateApiKeyDto } from '../dto/api-key.dto';
 
 @Controller('api-keys')
 export class ApiKeysController {
@@ -18,10 +20,10 @@ export class ApiKeysController {
   @Post()
   async create(
     @CurrentUser('id') userId: string,
-    @Body() body: { name: string; scopes?: string[]; expiresAt?: string },
+    @Body() dto: CreateApiKeyDto,
   ) {
-    const expiresAt = body.expiresAt ? new Date(body.expiresAt) : undefined;
-    return this.apiKeysService.create(userId, body.name, body.scopes, expiresAt);
+    const expiresAt = dto.expiresAt ? new Date(dto.expiresAt) : undefined;
+    return this.apiKeysService.create(userId, dto.name, dto.scopes, expiresAt);
   }
 
   @Get()
@@ -33,7 +35,7 @@ export class ApiKeysController {
   @HttpCode(HttpStatus.OK)
   async revoke(
     @CurrentUser('id') userId: string,
-    @Param('id') keyId: string,
+    @Param('id', ParseUUIDPipe) keyId: string,
   ) {
     await this.apiKeysService.revoke(userId, keyId);
     return { message: 'API key revoked' };

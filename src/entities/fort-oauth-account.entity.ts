@@ -6,6 +6,7 @@ import {
   ManyToOne,
   JoinColumn,
   Unique,
+  Index,
 } from 'typeorm';
 import { FortUser } from './fort-user.entity';
 
@@ -15,6 +16,7 @@ export class FortOAuthAccount {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
+  @Index()
   @Column('uuid')
   userId!: string;
 

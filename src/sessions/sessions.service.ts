@@ -1,7 +1,8 @@
 import { Injectable, Inject, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, IsNull } from 'typeorm';
+import { Repository, IsNull, Not, In } from 'typeorm';
 import { FortSession } from '../entities/fort-session.entity';
+import { FortRefreshToken } from '../entities/fort-refresh-token.entity';
 import { TokenService } from '../auth/token.service';
 import { FortAuthEventEmitter } from '../events/fort-auth-event-emitter';
 import { FORTAUTH_OPTIONS } from '../constants';
@@ -12,6 +13,8 @@ export class SessionsService {
   constructor(
     @InjectRepository(FortSession)
     private readonly sessionRepo: Repository<FortSession>,
+    @InjectRepository(FortRefreshToken)
+    private readonly refreshTokenRepo: Repository<FortRefreshToken>,
     private readonly tokenService: TokenService,
     private readonly eventEmitter: FortAuthEventEmitter,
     @Inject(FORTAUTH_OPTIONS) private readonly options: FortAuthOptions,
@@ -42,6 +45,12 @@ export class SessionsService {
     return session;
   }
 
+  async findActiveById(sessionId: string): Promise<FortSession | null> {
+    return this.sessionRepo.findOne({
+      where: { id: sessionId, revokedAt: IsNull() },
+    });
+  }
+
   async list(userId: string): Promise<FortSession[]> {
     return this.sessionRepo.find({
       where: { userId, revokedAt: IsNull() },
@@ -67,18 +76,28 @@ export class SessionsService {
   }
 
   async revokeAll(userId: string, exceptSessionId?: string): Promise<void> {
-    const sessions = await this.sessionRepo.find({
-      where: { userId, revokedAt: IsNull() },
-    });
+    // Atomic bulk revocation using QueryBuilder
+    const qb = this.sessionRepo
+      .createQueryBuilder()
+      .update(FortSession)
+      .set({ revokedAt: new Date() })
+      .where('userId = :userId', { userId })
+      .andWhere('revokedAt IS NULL');
 
-    for (const session of sessions) {
-      if (exceptSessionId && session.id === exceptSessionId) continue;
-      session.revokedAt = new Date();
-      await this.sessionRepo.save(session);
-      if (session.refreshTokenId) {
-        await this.tokenService.revokeById(session.refreshTokenId);
-      }
+    if (exceptSessionId) {
+      qb.andWhere('id != :exceptSessionId', { exceptSessionId });
     }
+
+    await qb.execute();
+
+    // Bulk-revoke all refresh tokens for this user
+    await this.refreshTokenRepo
+      .createQueryBuilder()
+      .update(FortRefreshToken)
+      .set({ isRevoked: true })
+      .where('userId = :userId', { userId })
+      .andWhere('isRevoked = false')
+      .execute();
   }
 
   async updateLastActive(sessionId: string): Promise<void> {
@@ -95,12 +114,27 @@ export class SessionsService {
 
     if (sessions.length > max) {
       const toRevoke = sessions.slice(0, sessions.length - max);
-      for (const session of toRevoke) {
-        session.revokedAt = new Date();
-        await this.sessionRepo.save(session);
-        if (session.refreshTokenId) {
-          await this.tokenService.revokeById(session.refreshTokenId);
-        }
+      const ids = toRevoke.map((s) => s.id);
+      const refreshTokenIds = toRevoke
+        .map((s) => s.refreshTokenId)
+        .filter((id): id is string => !!id);
+
+      // Bulk revoke sessions
+      await this.sessionRepo
+        .createQueryBuilder()
+        .update(FortSession)
+        .set({ revokedAt: new Date() })
+        .where('id IN (:...ids)', { ids })
+        .execute();
+
+      // Bulk revoke associated refresh tokens
+      if (refreshTokenIds.length > 0) {
+        await this.refreshTokenRepo
+          .createQueryBuilder()
+          .update(FortRefreshToken)
+          .set({ isRevoked: true })
+          .where('id IN (:...ids)', { ids: refreshTokenIds })
+          .execute();
       }
     }
   }

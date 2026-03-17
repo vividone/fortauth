@@ -64,6 +64,17 @@ export interface FortAuthOptions {
     expiry?: string;                         // default: '10m'
     maxRequestsPerWindow?: number;           // default: 5
     windowDuration?: string;                 // default: '15m'
+    maxVerifyAttempts?: number;              // default: 5
+    verifyWindowDuration?: string;           // default: '15m'
+  };
+
+  /** Password policy configuration */
+  password?: {
+    minLength?: number;                      // default: 8
+    requireUppercase?: boolean;              // default: true
+    requireLowercase?: boolean;              // default: true
+    requireNumbers?: boolean;                // default: true
+    requireSpecialChars?: boolean;           // default: true
   };
 
   /** Email sending callbacks (required) */
@@ -78,4 +89,8 @@ export interface FortAuthOptions {
 
   /** Register FortAuthGuard as a global guard — default: true */
   enableGlobalGuard?: boolean;
+
+  /** Hook to add custom claims to JWT access tokens */
+  extendJwtPayload?: (user: import('../entities/fort-user.entity').FortUser) =>
+    Record<string, any> | Promise<Record<string, any>>;
 }

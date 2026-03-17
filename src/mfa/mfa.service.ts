@@ -4,12 +4,15 @@ import {
   BadRequestException,
   UnauthorizedException,
   NotFoundException,
+  HttpException,
+  HttpStatus,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, IsNull } from 'typeorm';
+import { Repository, IsNull, OptimisticLockVersionMismatchError } from 'typeorm';
 import { authenticator } from 'otplib';
 import * as QRCode from 'qrcode';
 import { createHash, randomBytes } from 'crypto';
+import { timingSafeCompare } from '../utils/timing-safe-compare';
 import { FortMfaSecret } from '../entities/fort-mfa-secret.entity';
 import { FortUser } from '../entities/fort-user.entity';
 import { PasswordService } from '../auth/password.service';
@@ -17,8 +20,15 @@ import { FortAuthEventEmitter } from '../events/fort-auth-event-emitter';
 import { FORTAUTH_OPTIONS } from '../constants';
 import type { FortAuthOptions } from '../interfaces';
 
+interface RateLimitEntry {
+  count: number;
+  resetAt: number;
+}
+
 @Injectable()
 export class MfaService {
+  private readonly backupAttempts = new Map<string, RateLimitEntry>();
+
   constructor(
     @InjectRepository(FortMfaSecret)
     private readonly mfaRepo: Repository<FortMfaSecret>,
@@ -95,16 +105,34 @@ export class MfaService {
   }
 
   async verifyBackupCode(userId: string, code: string): Promise<boolean> {
+    this.enforceBackupRateLimit(userId);
+
     const mfaSecret = await this.mfaRepo.findOne({ where: { userId } });
     if (!mfaSecret || !mfaSecret.verifiedAt) return false;
 
     const hashedInput = this.hashCode(code);
-    const idx = mfaSecret.backupCodes.indexOf(hashedInput);
-    if (idx === -1) return false;
+    const idx = mfaSecret.backupCodes.findIndex((stored) =>
+      timingSafeCompare(stored, hashedInput),
+    );
+    if (idx === -1) {
+      this.recordBackupAttempt(userId);
+      return false;
+    }
 
-    // Consume the backup code
+    // Consume the backup code with optimistic locking
     mfaSecret.backupCodes.splice(idx, 1);
-    await this.mfaRepo.save(mfaSecret);
+    try {
+      await this.mfaRepo.save(mfaSecret);
+    } catch (err) {
+      if (err instanceof OptimisticLockVersionMismatchError) {
+        // Retry once: re-fetch and re-check
+        return this.retryBackupCodeConsumption(userId, hashedInput);
+      }
+      throw err;
+    }
+
+    // Reset attempts on success
+    this.backupAttempts.delete(userId);
     return true;
   }
 
@@ -124,7 +152,17 @@ export class MfaService {
     this.eventEmitter.mfaDisabled(userId);
   }
 
-  async regenerateBackupCodes(userId: string): Promise<string[]> {
+  async regenerateBackupCodes(userId: string, password: string): Promise<string[]> {
+    const user = await this.userRepo.findOneOrFail({ where: { id: userId } });
+    if (!user.passwordHash) {
+      throw new BadRequestException('Cannot verify password for OAuth-only accounts');
+    }
+
+    const valid = await this.passwordService.verify(password, user.passwordHash);
+    if (!valid) {
+      throw new UnauthorizedException('Invalid password');
+    }
+
     const mfaSecret = await this.mfaRepo.findOne({ where: { userId } });
     if (!mfaSecret || !mfaSecret.verifiedAt) {
       throw new NotFoundException('MFA is not enabled');
@@ -147,5 +185,54 @@ export class MfaService {
 
   private hashCode(code: string): string {
     return createHash('sha256').update(code).digest('hex');
+  }
+
+  private async retryBackupCodeConsumption(
+    userId: string,
+    hashedInput: string,
+  ): Promise<boolean> {
+    const mfaSecret = await this.mfaRepo.findOne({ where: { userId } });
+    if (!mfaSecret || !mfaSecret.verifiedAt) return false;
+
+    const idx = mfaSecret.backupCodes.findIndex((stored) =>
+      timingSafeCompare(stored, hashedInput),
+    );
+    if (idx === -1) return false;
+
+    mfaSecret.backupCodes.splice(idx, 1);
+    await this.mfaRepo.save(mfaSecret);
+    this.backupAttempts.delete(userId);
+    return true;
+  }
+
+  private enforceBackupRateLimit(userId: string): void {
+    const maxAttempts = 5;
+    const windowMs = 15 * 60 * 1000; // 15 minutes
+
+    const entry = this.backupAttempts.get(userId);
+    if (entry) {
+      if (Date.now() > entry.resetAt) {
+        this.backupAttempts.delete(userId);
+      } else if (entry.count >= maxAttempts) {
+        throw new HttpException(
+          {
+            statusCode: HttpStatus.TOO_MANY_REQUESTS,
+            message: 'Too many backup code attempts. Please try again later.',
+          },
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+    }
+  }
+
+  private recordBackupAttempt(userId: string): void {
+    const windowMs = 15 * 60 * 1000;
+    const entry = this.backupAttempts.get(userId);
+
+    if (entry && Date.now() <= entry.resetAt) {
+      entry.count++;
+    } else {
+      this.backupAttempts.set(userId, { count: 1, resetAt: Date.now() + windowMs });
+    }
   }
 }

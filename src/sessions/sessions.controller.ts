@@ -3,6 +3,7 @@ import {
   Get,
   Delete,
   Param,
+  ParseUUIDPipe,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
@@ -22,7 +23,7 @@ export class SessionsController {
   @HttpCode(HttpStatus.OK)
   async revoke(
     @CurrentUser('id') userId: string,
-    @Param('id') sessionId: string,
+    @Param('id', ParseUUIDPipe) sessionId: string,
   ) {
     await this.sessionsService.revoke(userId, sessionId);
     return { message: 'Session revoked' };

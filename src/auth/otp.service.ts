@@ -13,8 +13,15 @@ import { FORTAUTH_OPTIONS } from '../constants';
 import type { FortAuthOptions } from '../interfaces';
 import { parseDuration } from '../utils/parse-duration';
 
+interface RateLimitEntry {
+  count: number;
+  resetAt: number;
+}
+
 @Injectable()
 export class OtpService {
+  private readonly verifyAttempts = new Map<string, RateLimitEntry>();
+
   constructor(
     @InjectRepository(FortOtp)
     private readonly otpRepo: Repository<FortOtp>,
@@ -58,20 +65,29 @@ export class OtpService {
     code: string,
     purpose: OtpPurpose,
   ): Promise<void> {
+    this.enforceVerifyRateLimit(userId, purpose);
+
     const otpHash = this.hashOtp(code);
 
-    const otp = await this.otpRepo.findOne({
-      where: { userId, otpHash, purpose, usedAt: IsNull() },
-      order: { createdAt: 'DESC' },
-    });
+    // Atomic: mark as used only if it's valid and unused
+    const result = await this.otpRepo
+      .createQueryBuilder()
+      .update(FortOtp)
+      .set({ usedAt: new Date() })
+      .where('userId = :userId', { userId })
+      .andWhere('otpHash = :otpHash', { otpHash })
+      .andWhere('purpose = :purpose', { purpose })
+      .andWhere('usedAt IS NULL')
+      .andWhere('expiresAt > :now', { now: new Date() })
+      .execute();
 
-    if (!otp || otp.expiresAt < new Date()) {
+    if (!result.affected || result.affected === 0) {
+      this.recordVerifyAttempt(userId, purpose);
       throw new BadRequestException('Invalid or expired OTP');
     }
 
-    // Mark as used (single-use)
-    otp.usedAt = new Date();
-    await this.otpRepo.save(otp);
+    // Reset verify attempts on success
+    this.verifyAttempts.delete(`${userId}:${purpose}`);
   }
 
   // ─── Private helpers ──────────────────────────────────────
@@ -112,4 +128,36 @@ export class OtpService {
     }
   }
 
+  private enforceVerifyRateLimit(userId: string, purpose: OtpPurpose): void {
+    const key = `${userId}:${purpose}`;
+    const maxAttempts = this.options.otp?.maxVerifyAttempts ?? 5;
+    const windowMs = parseDuration(this.options.otp?.verifyWindowDuration || '15m');
+
+    const entry = this.verifyAttempts.get(key);
+    if (entry) {
+      if (Date.now() > entry.resetAt) {
+        this.verifyAttempts.delete(key);
+      } else if (entry.count >= maxAttempts) {
+        throw new HttpException(
+          {
+            statusCode: HttpStatus.TOO_MANY_REQUESTS,
+            message: 'Too many verification attempts. Please try again later.',
+          },
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+    }
+  }
+
+  private recordVerifyAttempt(userId: string, purpose: OtpPurpose): void {
+    const key = `${userId}:${purpose}`;
+    const windowMs = parseDuration(this.options.otp?.verifyWindowDuration || '15m');
+    const entry = this.verifyAttempts.get(key);
+
+    if (entry && Date.now() <= entry.resetAt) {
+      entry.count++;
+    } else {
+      this.verifyAttempts.set(key, { count: 1, resetAt: Date.now() + windowMs });
+    }
+  }
 }

@@ -76,32 +76,37 @@ export class MagicLinkService {
     userAgent?: string,
   ): Promise<{ user: Partial<FortUser>; tokens: TokenPair }> {
     const tokenHash = createHash('sha256').update(token).digest('hex');
-    const magicLink = await this.magicLinkRepo.findOne({
-      where: { tokenHash },
-    });
 
-    if (!magicLink) {
-      throw new BadRequestException('Invalid magic link');
-    }
+    // Atomic: mark as used only if valid and unused
+    const result = await this.magicLinkRepo
+      .createQueryBuilder()
+      .update(FortMagicLink)
+      .set({ usedAt: new Date() })
+      .where('tokenHash = :tokenHash', { tokenHash })
+      .andWhere('usedAt IS NULL')
+      .andWhere('expiresAt > :now', { now: new Date() })
+      .returning('email')
+      .execute();
 
-    if (magicLink.usedAt) {
-      throw new BadRequestException('Magic link has already been used');
-    }
-
-    if (magicLink.expiresAt < new Date()) {
+    if (!result.affected || result.affected === 0) {
+      // Provide specific error message
+      const existing = await this.magicLinkRepo.findOne({ where: { tokenHash } });
+      if (!existing) {
+        throw new BadRequestException('Invalid magic link');
+      }
+      if (existing.usedAt) {
+        throw new BadRequestException('Magic link has already been used');
+      }
       throw new BadRequestException('Magic link has expired');
     }
 
+    const email = result.raw[0]?.email;
     const user = await this.userRepo.findOne({
-      where: { email: magicLink.email },
+      where: { email },
     });
     if (!user) {
       throw new BadRequestException('User not found');
     }
-
-    // Mark token as used
-    magicLink.usedAt = new Date();
-    await this.magicLinkRepo.save(magicLink);
 
     // Mark email as verified
     if (!user.isEmailVerified) {
@@ -116,7 +121,7 @@ export class MagicLinkService {
     const refreshToken = await this.tokenService.generateRefreshToken(user);
     const refreshTokenId = this.tokenService.extractRefreshTokenId(refreshToken);
     const session = await this.sessionsService.create(user.id, refreshTokenId, ip, userAgent);
-    const accessToken = this.tokenService.generateAccessToken(user, session.id);
+    const accessToken = await this.tokenService.generateAccessToken(user, session.id);
 
     this.eventEmitter.userLogin(user.id, { ip, method: 'magic_link' });
 

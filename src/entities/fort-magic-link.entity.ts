@@ -3,6 +3,7 @@ import {
   PrimaryGeneratedColumn,
   Column,
   CreateDateColumn,
+  Index,
 } from 'typeorm';
 
 @Entity('fort_magic_links')
@@ -10,9 +11,11 @@ export class FortMagicLink {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
+  @Index()
   @Column()
   email!: string;
 
+  @Index()
   @Column()
   tokenHash!: string;
 

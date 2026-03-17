@@ -5,6 +5,7 @@ import {
   CreateDateColumn,
   ManyToOne,
   JoinColumn,
+  Index,
 } from 'typeorm';
 import { FortUser } from './fort-user.entity';
 
@@ -13,6 +14,7 @@ export class FortSession {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
+  @Index()
   @Column('uuid')
   userId!: string;
 

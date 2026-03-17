@@ -1,8 +1,14 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, Inject, BadRequestException } from '@nestjs/common';
 import * as argon2 from 'argon2';
+import { FORTAUTH_OPTIONS } from '../constants';
+import type { FortAuthOptions } from '../interfaces';
 
 @Injectable()
 export class PasswordService {
+  constructor(
+    @Inject(FORTAUTH_OPTIONS) private readonly options: FortAuthOptions,
+  ) {}
+
   async hash(password: string): Promise<string> {
     return argon2.hash(password);
   }
@@ -12,21 +18,23 @@ export class PasswordService {
   }
 
   validateStrength(password: string): void {
+    const policy = this.options.password;
     const errors: string[] = [];
 
-    if (password.length < 8) {
-      errors.push('at least 8 characters');
+    const minLength = policy?.minLength ?? 8;
+    if (password.length < minLength) {
+      errors.push(`at least ${minLength} characters`);
     }
-    if (!/[a-z]/.test(password)) {
+    if ((policy?.requireLowercase ?? true) && !/[a-z]/.test(password)) {
       errors.push('a lowercase letter');
     }
-    if (!/[A-Z]/.test(password)) {
+    if ((policy?.requireUppercase ?? true) && !/[A-Z]/.test(password)) {
       errors.push('an uppercase letter');
     }
-    if (!/\d/.test(password)) {
+    if ((policy?.requireNumbers ?? true) && !/\d/.test(password)) {
       errors.push('a number');
     }
-    if (!/[^a-zA-Z0-9]/.test(password)) {
+    if ((policy?.requireSpecialChars ?? true) && !/[^a-zA-Z0-9]/.test(password)) {
       errors.push('a special character');
     }
 

@@ -2,6 +2,7 @@ import {
   Entity,
   PrimaryGeneratedColumn,
   Column,
+  VersionColumn,
   CreateDateColumn,
   OneToOne,
   JoinColumn,
@@ -24,6 +25,9 @@ export class FortMfaSecret {
 
   @Column({ type: 'timestamptz', nullable: true })
   verifiedAt?: Date;
+
+  @VersionColumn()
+  version!: number;
 
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;

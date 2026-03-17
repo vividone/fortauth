@@ -13,6 +13,11 @@ import { MfaService } from './mfa.service';
 import { AuthService } from '../auth/auth.service';
 import { TokenService } from '../auth/token.service';
 import { MfaVerifyLoginDto } from '../dto/auth.dto';
+import {
+  EnableMfaDto,
+  DisableMfaDto,
+  RegenerateBackupCodesDto,
+} from '../dto/mfa.dto';
 
 @Controller('mfa')
 export class MfaController {
@@ -31,9 +36,9 @@ export class MfaController {
   @HttpCode(HttpStatus.OK)
   async enable(
     @CurrentUser('id') userId: string,
-    @Body('code') code: string,
+    @Body() dto: EnableMfaDto,
   ) {
-    await this.mfaService.enableMfa(userId, code);
+    await this.mfaService.enableMfa(userId, dto.code);
     return { message: 'MFA enabled successfully' };
   }
 
@@ -59,15 +64,18 @@ export class MfaController {
   @HttpCode(HttpStatus.OK)
   async disable(
     @CurrentUser('id') userId: string,
-    @Body('password') password: string,
+    @Body() dto: DisableMfaDto,
   ) {
-    await this.mfaService.disableMfa(userId, password);
+    await this.mfaService.disableMfa(userId, dto.password);
     return { message: 'MFA disabled' };
   }
 
   @Post('backup-codes')
-  async regenerateBackupCodes(@CurrentUser('id') userId: string) {
-    const codes = await this.mfaService.regenerateBackupCodes(userId);
+  async regenerateBackupCodes(
+    @CurrentUser('id') userId: string,
+    @Body() dto: RegenerateBackupCodesDto,
+  ) {
+    const codes = await this.mfaService.regenerateBackupCodes(userId, dto.password);
     return { backupCodes: codes };
   }
 }

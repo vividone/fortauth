@@ -5,6 +5,7 @@ import {
   CreateDateColumn,
   ManyToOne,
   JoinColumn,
+  Index,
 } from 'typeorm';
 import { FortUser } from './fort-user.entity';
 
@@ -13,12 +14,14 @@ export class FortApiKey {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
+  @Index()
   @Column('uuid')
   userId!: string;
 
   @Column()
   name!: string;
 
+  @Index()
   @Column({ length: 12 })
   keyPrefix!: string;
 

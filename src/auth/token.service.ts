@@ -9,6 +9,7 @@ import { FortUser } from '../entities/fort-user.entity';
 import { FORTAUTH_OPTIONS } from '../constants';
 import type { FortAuthOptions } from '../interfaces';
 import { parseDuration } from '../utils/parse-duration';
+import { timingSafeCompare } from '../utils/timing-safe-compare';
 
 export interface TokenPair {
   accessToken: string;
@@ -25,7 +26,7 @@ export class TokenService {
   ) {}
 
   // ─── Access Token ──────────────────────────────────────
-  generateAccessToken(user: FortUser, sessionId?: string): string {
+  async generateAccessToken(user: FortUser, sessionId?: string): Promise<string> {
     const payload: Record<string, any> = {
       sub: user.id,
       email: user.email,
@@ -34,6 +35,10 @@ export class TokenService {
     };
     if (sessionId) {
       payload.sessionId = sessionId;
+    }
+    if (this.options.extendJwtPayload) {
+      const custom = await this.options.extendJwtPayload(user);
+      Object.assign(payload, custom);
     }
     return this.jwtService.sign(payload, {
       expiresIn: (this.options.jwt.accessTokenExpiry || '15m') as any,
@@ -83,7 +88,7 @@ export class TokenService {
     user: FortUser,
     family?: string,
   ): Promise<TokenPair> {
-    const accessToken = this.generateAccessToken(user);
+    const accessToken = await this.generateAccessToken(user);
     const refreshToken = await this.generateRefreshToken(user, family);
     return { accessToken, refreshToken };
   }
@@ -112,7 +117,7 @@ export class TokenService {
       );
     }
 
-    if (existing.tokenHash !== tokenHash) {
+    if (!timingSafeCompare(existing.tokenHash, tokenHash)) {
       throw new UnauthorizedException('Invalid refresh token');
     }
 
@@ -129,7 +134,7 @@ export class TokenService {
     const newRefreshTokenId = this.extractRefreshTokenId(newRefreshToken);
 
     // Generate access token (sessionId will be updated by caller if needed)
-    const accessToken = this.generateAccessToken(existing.user);
+    const accessToken = await this.generateAccessToken(existing.user);
 
     return {
       tokenPair: { accessToken, refreshToken: newRefreshToken },

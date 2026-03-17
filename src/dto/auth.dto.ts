@@ -4,6 +4,7 @@ import {
   IsString,
   IsOptional,
   MinLength,
+  MaxLength,
   Length,
 } from 'class-validator';
 
@@ -13,6 +14,7 @@ export class RegisterDto {
 
   @IsString()
   @MinLength(8)
+  @MaxLength(128)
   password!: string;
 
   @IsString()
@@ -26,6 +28,7 @@ export class LoginDto {
 
   @IsString()
   @IsNotEmpty()
+  @MaxLength(128)
   password!: string;
 }
 
@@ -56,16 +59,19 @@ export class ResetPasswordDto {
 
   @IsString()
   @MinLength(8)
+  @MaxLength(128)
   newPassword!: string;
 }
 
 export class ChangePasswordDto {
   @IsString()
   @IsNotEmpty()
+  @MaxLength(128)
   currentPassword!: string;
 
   @IsString()
   @MinLength(8)
+  @MaxLength(128)
   newPassword!: string;
 
   @IsString()

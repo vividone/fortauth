@@ -5,6 +5,7 @@ import {
   CreateDateColumn,
   ManyToOne,
   JoinColumn,
+  Index,
 } from 'typeorm';
 import { FortUser } from './fort-user.entity';
 
@@ -13,18 +14,21 @@ export class FortRefreshToken {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
+  @Index()
   @Column('uuid')
   userId!: string;
 
   @Column()
   tokenHash!: string;
 
+  @Index()
   @Column('uuid')
   family!: string;
 
   @Column({ default: false })
   isRevoked!: boolean;
 
+  @Index()
   @Column({ type: 'timestamptz' })
   expiresAt!: Date;
 
